@@ -6,11 +6,13 @@ import textwrap
 import pandas as pd
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from tkcalendar import DateEntry  # For date picker
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.units import inch, mm
 import fitz  # PyMuPDF
+import datetime
 logging.basicConfig(filename='app.log', level=logging.ERROR, format='%(asctime)s - %(message)s')
 # Update these paths according to your file locations
 template_path = r'C:\Users\Shree\Desktop\idcard\projectidcard\ritika\ST.png'
@@ -71,49 +73,11 @@ def display_pdf(pdf_path):
     except Exception as e:
         messagebox.showerror("Error", f"Error displaying PDF: {str(e)}")
 
-def display_pdf(pdf_path):
-    for widget in pdf_frame.winfo_children():
-        widget.destroy()
-    
-    try:
-        doc = fitz.open(pdf_path)
-        num_pages = doc.page_count
-
-        # Create a frame to hold the PDF pages
-        page_frame = tk.Frame(pdf_frame)
-        page_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        # Add a scrollbar
-        scrollbar = tk.Scrollbar(pdf_frame, orient=tk.VERTICAL)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        # Create a canvas to display the PDF pages
-        canvas = tk.Canvas(page_frame, width=800, height=600, yscrollcommand=scrollbar.set)
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        # Configure the scrollbar
-        scrollbar.config(command=canvas.yview)
-
-        # Create a frame to hold the PDF pages inside the canvas
-        inner_frame = tk.Frame(canvas)
-        canvas.create_window((0, 0), window=inner_frame, anchor=tk.NW)
-
-        # Display each page of the PDF
-        for i in range(num_pages):
-            page = doc.load_page(i)
-            pix = page.get_pixmap()
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            img_tk = ImageTk.PhotoImage(img)
-            page_label = tk.Label(inner_frame, image=img_tk)
-            page_label.image = img_tk  # Keep a reference to avoid garbage collection
-            page_label.pack(fill=tk.X)
-
-        # Set the scrollregion after creating all the pages
-        inner_frame.update_idletasks()
-        canvas.config(scrollregion=canvas.bbox(tk.ALL))
-
-    except Exception as e:
-        messagebox.showerror("Error", f"Error displaying PDF: {str(e)}")
+def resize_canvas(canvas):
+    # Update the canvas size based on the frame size
+    canvas.config(width=pdf_frame.winfo_width(), height=pdf_frame.winfo_height())
+    canvas.update_idletasks()
+    canvas.configure(scrollregion=canvas.bbox(tk.ALL))
 
 def preprocess_image(image_path):
     try:
@@ -297,7 +261,7 @@ def create_pdf(images, pdf_path):
     except Exception as e:
         logging.error(f"Error creating PDF: {str(e)}")
         return None
-
+# Function to select and load a CSV file
 def select_csv():
     file_path = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv")])
     if file_path:
@@ -310,34 +274,54 @@ def select_csv():
             messagebox.showerror("Error", f"Error reading CSV file: {str(e)}")
 def display_csv_data(data):
     global treeview, checkbox_vars
+
+    # Clear any existing widgets in the treeview_frame
     for widget in treeview_frame.winfo_children():
         widget.destroy()
 
-    treeview = ttk.Treeview(treeview_frame, columns=list(data.columns), show="headings")
+    # Create a canvas to enable scrolling for both Treeview and checkboxes
+    canvas = tk.Canvas(treeview_frame)
+    canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+    # Add a scrollbar to the canvas
+    scrollbar = ttk.Scrollbar(treeview_frame, orient=tk.VERTICAL, command=canvas.yview)
+    scrollbar.pack(side=tk.LEFT, fill=tk.Y)
+
+    # Configure the canvas to work with the scrollbar
+    canvas.configure(yscrollcommand=scrollbar.set)
+    canvas.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+
+    # Create a frame inside the canvas to hold the Treeview and checkboxes
+    content_frame = tk.Frame(canvas)
+    canvas.create_window((0, 0), window=content_frame, anchor="nw")
+
+    # Create a Treeview widget within the content frame
+    treeview = ttk.Treeview(content_frame, columns=list(data.columns), show="headings")
+    treeview.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
     for col in data.columns:
         treeview.heading(col, text=col)
         treeview.column(col, width=100)
 
+    # Insert the CSV data into the Treeview
     for i, row in data.iterrows():
         treeview.insert("", "end", values=list(row))
 
-    treeview.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    # Create a frame for the checkboxes aligned with the Treeview rows
+    checkbox_frame = tk.Frame(content_frame)
+    checkbox_frame.pack(side=tk.LEFT, fill=tk.Y)
 
-    scrollbar = ttk.Scrollbar(treeview_frame, orient=tk.VERTICAL, command=treeview.yview)
-    treeview.configure(yscroll=scrollbar.set)
-    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-    # Add checkboxes
-    checkbox_frame = tk.Frame(treeview_frame)
-    checkbox_frame.pack(side=tk.RIGHT, fill=tk.Y)
-
+    # Create checkboxes aligned with each ID
     checkbox_vars = []
     for i in range(len(data)):
         var = tk.BooleanVar()
         chk = tk.Checkbutton(checkbox_frame, variable=var)
-        chk.pack(anchor='w')
+        chk.pack(anchor='w', pady=1.5)  # Adjust padding as necessary to align with rows
         checkbox_vars.append(var)
 
+    # Update the scroll region of the canvas to match the content frame
+    content_frame.update_idletasks()
+    canvas.configure(scrollregion=canvas.bbox("all"))
 
 def make_editable(treeview, selected_item):
     if selected_item is None:
@@ -355,20 +339,31 @@ def make_editable(treeview, selected_item):
     entries = []
     for i, col in enumerate(treeview["columns"]):
         tk.Label(edit_window, text=col).grid(row=i, column=0)
-        entry = tk.Entry(edit_window)
-        entry.insert(0, values[i])
+        
+        if "Date" in col:  # If the column is a date, use a DateEntry widget
+            # Try to parse the date in the expected format
+            try:
+                date_value = datetime.datetime.strptime(values[i], '%m/%d/%Y').date()  # Adjust format as needed
+            except ValueError:
+                date_value = datetime.datetime.strptime(values[i], '%Y-%m-%d').date()  # Adjust format as needed
+
+            entry = DateEntry(edit_window, date_pattern='y-mm-dd')
+            entry.set_date(date_value)  # Pre-fill with existing date
+        else:
+            entry = tk.Entry(edit_window)
+            entry.insert(0, values[i])
+        
         entry.grid(row=i, column=1)
         entries.append(entry)
 
     # Save changes button
     def save_changes():
-        new_values = [entry.get() for entry in entries]
+        new_values = [entry.get() if not isinstance(entry, DateEntry) else entry.get_date().strftime('%Y-%m-%d') for entry in entries]
         csv_data.loc[index, :] = new_values
         treeview.item(selected_item, values=new_values)
         edit_window.destroy()
 
     tk.Button(edit_window, text="Save Changes", command=save_changes).grid(row=len(treeview["columns"]), column=0, columnspan=2)
-
 def get_selected_rows_indices():
     global checkbox_vars
     selected_indices = [i for i, var in enumerate(checkbox_vars) if var.get()]
